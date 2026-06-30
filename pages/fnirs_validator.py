@@ -253,6 +253,12 @@ else:
             # Sync the measurement date safely using the official MNE method
             meas_date = working_raw.info.get('meas_date', None)
             if meas_date is not None:
+                # Create a 1-channel Raw object and explicitly name the channel
+            safe_ch_name = channel_option.replace(" ", "_")
+            epoch_info = mne.create_info(ch_names=[safe_ch_name], sfreq=fs, ch_types=['misc'])
+            
+            meas_date = working_raw.info.get('meas_date', None)
+            if meas_date is not None:
                 epoch_info.set_meas_date(meas_date)
             
             filtered_raw = mne.io.RawArray(np.atleast_2d(data_to_plot), epoch_info, verbose=False)
@@ -269,33 +275,7 @@ else:
             events, event_dict = mne.events_from_annotations(filtered_raw, verbose=False)
             event_id = event_dict[selected_event]
             
-            try:
-                epochs = mne.Epochs(filtered_raw, events, event_id=event_id, 
-                                    tmin=tmin, tmax=tmax, baseline=(tmin, 0), preload=True, verbose=False)
-                
-                if len(epochs) > 0:
-                    evoked = epochs.average()
-                    fig_era = go.Figure()
-                    
-                    # Individual Trials
-                    for i in range(len(epochs)):
-                        fig_era.add_trace(go.Scatter(x=epochs.times, y=epochs.get_data()[i, 0, :], 
-                                                     mode='lines', line=dict(color='lightgray', width=1), 
-                                                     opacity=0.3, showlegend=False, hoverinfo='skip'))
-                    
-                    # Grand Average
-                    fig_era.add_trace(go.Scatter(x=evoked.times, y=evoked.data[0], mode='lines', 
-                                                 name=f'Average {hemo_type.split(" ")[0]} Response', 
-                                                 line=dict(color=theme_color, width=3)))
-                    
-                    # Pulse Marker
-                    fig_era.add_vline(x=0, line_color='black', line_dash='dash', annotation_text="TMS Pulse")
-                    
-                    fig_era.update_layout(xaxis_title="Time relative to pulse (s)", yaxis_title="Amplitude (µM)",
-                                          template="plotly_white", title=f"Averaged Response to '{selected_event}' (n={len(epochs)} pulses)")
-                    st.plotly_chart(fig_era, use_container_width=True)
-                else:
-                    st.info("No events found within the current trimmed time range.")
-                    
-            except Exception as e:
-                st.error(f"Could not calculate Epochs. Check your time window. Error: {e}")
+            # Epoching: explicitly pick the channel by name to avoid ambiguity
+            epochs = mne.Epochs(filtered_raw, events, event_id=event_id, 
+                                tmin=tmin, tmax=tmax, baseline=(tmin, 0), 
+                                picks=[safe_ch_name], preload=True, verbose=False)
