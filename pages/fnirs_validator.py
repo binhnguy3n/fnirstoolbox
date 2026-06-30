@@ -257,9 +257,13 @@ else:
             
             filtered_raw = mne.io.RawArray(np.atleast_2d(data_to_plot), epoch_info, verbose=False)
             
-            # Strip orig_time from the copied annotations to ensure perfect relative alignment
-            safe_annots = working_raw.annotations.copy()
-            safe_annots.orig_time = None
+            # Create a new Annotations object without orig_time
+            safe_annots = mne.Annotations(
+                onset=working_raw.annotations.onset,
+                duration=working_raw.annotations.duration,
+                description=working_raw.annotations.description,
+                orig_time=None
+            )
             filtered_raw.set_annotations(safe_annots)
             
             events, event_dict = mne.events_from_annotations(filtered_raw, verbose=False)
