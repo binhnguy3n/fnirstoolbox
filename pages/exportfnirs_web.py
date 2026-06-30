@@ -48,10 +48,8 @@ else:
         
         col_controls, col_empty = st.columns([1, 2])
         with col_controls:
-            # Channel selector for preview
             preview_channel = st.selectbox("Select Channel to Preview", ch_names)
             
-            # Dual-handled slider for cropping
             st.markdown("**Select exact start and end times to crop:**")
             trim_range = st.slider("Time Range (s)", 
                                    min_value=0.0, 
@@ -69,10 +67,15 @@ else:
         fig_preview.add_trace(go.Scatter(x=preview_times, y=preview_data, mode='lines', 
                                          name=preview_channel, line=dict(color='#1f77b4', width=1)))
         
-        # Add markers to preview
-        if len(working_raw.annotations) > 0:
-            for ann in working_raw.annotations:
-                fig_preview.add_vline(x=ann['onset'], line_color='gray', line_dash="dash", line_width=1, layer="below")
+        # --- FIX: MANUAL MARKER ALIGNMENT FOR PREVIEW ---
+        if len(raw.annotations) > 0:
+            for ann in raw.annotations:
+                orig_onset = ann['onset']
+                # Only draw the marker if it falls inside our new trimmed window
+                if trim_range[0] <= orig_onset <= trim_range[1]:
+                    # Shift the marker's position to match the new 0-based time axis
+                    aligned_x = orig_onset - trim_range[0]
+                    fig_preview.add_vline(x=aligned_x, line_color='gray', line_dash="dash", line_width=1.5, layer="below")
                 
         fig_preview.update_layout(title=f"Previewing: {preview_channel} (Trimmed to {trim_range[1] - trim_range[0]:.1f}s)",
                                   xaxis_title="Time (s)", yaxis_title="Amplitude (V)", 
@@ -97,19 +100,10 @@ else:
                 with st.spinner(f"Applying trims and generating {len(set([n.split(' ')[0] for n in ch_names if ' ' in n])) * 2} graphs..."):
                     
                     with tempfile.TemporaryDirectory() as temp_dir:
-                        # --- Apply the chosen trim limits to the main dataset ---
+                        # Apply the chosen trim limits to the main dataset
                         export_raw = raw.copy().crop(tmin=trim_range[0], tmax=trim_range[1])
                         
-                        # --- Marker Standardization ---
-                        if len(export_raw.annotations) > 0:
-                            new_annotations = mne.Annotations(
-                                onset=export_raw.annotations.onset,
-                                duration=0.2,
-                                description=export_raw.annotations.description
-                            )
-                            export_raw.set_annotations(new_annotations)
-                        
-                        # --- Conversions ---
+                        # Conversions
                         distances = mne.preprocessing.nirs.source_detector_distances(export_raw.info)
                         sd_distance_map = {ch.split(' ')[0]: dist for ch, dist in zip(export_raw.ch_names, distances)}
                         
@@ -155,11 +149,14 @@ else:
                                 axes[1].legend(loc="upper right")
                                 axes[1].grid(True, alpha=0.3)
 
-                            # Plot Markers
-                            if len(export_raw.annotations) > 0:
-                                for annot in export_raw.annotations:
-                                    axes[0].axvline(x=annot['onset'], color='gray', linestyle='--', alpha=0.5)
-                                    axes[1].axvline(x=annot['onset'], color='gray', linestyle='--', alpha=0.5)
+                            # --- FIX: MANUAL MARKER ALIGNMENT FOR EXPORT ---
+                            if len(raw.annotations) > 0:
+                                for annot in raw.annotations:
+                                    orig_onset = annot['onset']
+                                    if trim_range[0] <= orig_onset <= trim_range[1]:
+                                        aligned_x = orig_onset - trim_range[0]
+                                        axes[0].axvline(x=aligned_x, color='gray', linestyle='--', alpha=0.5)
+                                        axes[1].axvline(x=aligned_x, color='gray', linestyle='--', alpha=0.5)
 
                             plt.tight_layout()
                             
@@ -185,7 +182,6 @@ else:
                         
                         memory_zip.seek(0)
                         
-                        # Store the ZIP in Session State
                         st.session_state['export_zip'] = memory_zip
                         st.session_state['export_count'] = len(os.listdir(image_dir))
                         st.success("Graphs generated successfully! Click below to download.")
