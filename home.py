@@ -17,8 +17,9 @@ You can edit this file directly in GitHub to update your roadmap.
 # or just write directly in Markdown here.
 st.markdown("""
 ### Roadmap & Next Steps
-- [ ] **Markers:** Marker Editting
-- [ ] **ERA:** ERA View
+- [ ] **Validator:** HbO/HbR toggle
+- [ ] **Validator:** Marker Editting
+- [ ] **Validator:** ERA View
 
 ### Log
 - **2026-06-30:** Successfully deployed SOS filters and TMS marker editing.
