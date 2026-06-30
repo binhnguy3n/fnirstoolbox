@@ -96,8 +96,8 @@ else:
             st.error("⚠️ **Filter Error:** The High-pass cutoff must be strictly lower than the Low-pass cutoff. Please adjust the sliders.")
             st.stop() 
 
-        b, a = signal.butter(4, [highpass, lowpass], btype='bandpass', fs=fs)
-        data_to_plot = signal.filtfilt(b, a, data_raw)
+        sos = signal.butter(4, [highpass, lowpass], btype='bandpass', fs=fs, output='sos')
+        data_to_plot = signal.sosfiltfilt(sos, data_raw)
         
         freqs_filt, psd_filt = signal.welch(data_to_plot, fs, nperseg=1024)
         psd_to_plot_db = 10 * np.log10(psd_filt)
