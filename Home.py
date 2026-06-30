@@ -17,9 +17,8 @@ You can edit this file directly in GitHub to update your roadmap.
 # or just write directly in Markdown here.
 st.markdown("""
 ### Roadmap & Next Steps
-- [ ] **Motion Correction:** Implement Spline Interpolation for motion artifacts.
-- [ ] **Batch Processing:** Add a folder-upload feature for entire study cohorts.
-- [ ] **Export:** Add PDF report generation for clinical collaborators.
+- [ ] **Markers:** Marker Editting
+- [ ] **ERA:** ERA View
 
 ### Log
 - **2026-06-30:** Successfully deployed SOS filters and TMS marker editing.
