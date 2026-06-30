@@ -35,28 +35,31 @@ def load_and_prep_data(file_data):
         # Load the data into MNE using the temporary path
         raw = mne.io.read_raw_snirf(tmp_path, preload=True)
         raw_od = mne.preprocessing.nirs.optical_density(raw)
-        raw_haemo = mne.preprocessing.nirs.beer_lambert_law(raw_od, ppf=0.1)
         
-        # Isolate Oxyhemoglobin for visualization
-        raw_hbo = raw_haemo.copy().pick(picks='hbo')
+        # This function generates both HbO and HbR channels
+        raw_haemo = mne.preprocessing.nirs.beer_lambert_law(raw_od, ppf=0.1)
         
         # NOTE: We DO NOT delete the tmp_path here.
         # MNE requires the file to stay on disk to perform background operations like .crop()
         
-        return raw_hbo
+        return raw_haemo # Return the full object instead of isolating HbO
         
     except Exception as e:
         st.error(f"Error loading file: {e}")
         return None
 
-raw_hbo = load_and_prep_data(uploaded_file)
+raw_haemo = load_and_prep_data(uploaded_file)
 
-if raw_hbo is None:
+if raw_haemo is None:
     st.info("Please drag and drop a .snirf file into the sidebar to begin.")
 else:
-    # --- DATA TRIMMING UI ---
-    st.sidebar.header("3. Data Trimming")
-    max_time = float(raw_hbo.times[-1])
+    # --- DATA TRIMMING & SELECTION UI ---
+    st.sidebar.header("3. Data Trimming & Selection")
+    
+    # Toggle for Hemoglobin type
+    hb_type = st.sidebar.radio("Select Hemoglobin Type", ["HbO", "HbR", "HbTot"])
+    
+    max_time = float(raw_haemo.times[-1])
     
     # Dual-handled slider for cropping out motion artifacts at the start/end
     trim_range = st.sidebar.slider("Select Time Range (s)", 
@@ -66,13 +69,15 @@ else:
                                    step=1.0)
 
     # --- APPLY CROP TO A COPY OF THE DATA ---
-    working_raw = raw_hbo.copy().crop(tmin=trim_range[0], tmax=trim_range[1])
+    working_raw = raw_haemo.copy().crop(tmin=trim_range[0], tmax=trim_range[1])
 
     # --- VIEW OPTIONS ---
     st.sidebar.header("4. View Options")
-    ch_names = working_raw.ch_names
     
-    channel_option = st.sidebar.selectbox("Select Channel to View", ["Grand Average"] + ch_names)
+    # Extract base channel names (e.g., 'S1_D1' from 'S1_D1 hbo')
+    base_chans = [ch.replace(' hbo', '') for ch in working_raw.ch_names if ' hbo' in ch]
+    
+    channel_option = st.sidebar.selectbox("Select Channel to View", ["Grand Average"] + base_chans)
     overlay_raw = st.sidebar.checkbox("Overlay Raw Data", value=True)
     show_markers = st.sidebar.checkbox("Show Event Markers", value=True)
 
@@ -80,11 +85,35 @@ else:
     times = working_raw.times
     fs = working_raw.info['sfreq']
     
-    if channel_option == "Grand Average":
-        data_raw = np.mean(working_raw.get_data(), axis=0)
-    else:
-        ch_idx = ch_names.index(channel_option)
-        data_raw = working_raw.get_data()[ch_idx, :]
+    def get_hb_data(base_ch, hb):
+        """Helper to extract and combine channels based on user selection"""
+        if base_ch == "Grand Average":
+            chans_o = [ch for ch in working_raw.ch_names if ' hbo' in ch]
+            chans_r = [ch for ch in working_raw.ch_names if ' hbr' in ch]
+            
+            if hb == "HbO":
+                return np.mean(working_raw.get_data(picks=chans_o), axis=0)
+            elif hb == "HbR":
+                return np.mean(working_raw.get_data(picks=chans_r), axis=0)
+            else: # HbTot = HbO + HbR
+                data_o = np.mean(working_raw.get_data(picks=chans_o), axis=0)
+                data_r = np.mean(working_raw.get_data(picks=chans_r), axis=0)
+                return data_o + data_r
+        else:
+            ch_o = f"{base_ch} hbo"
+            ch_r = f"{base_ch} hbr"
+            
+            if hb == "HbO":
+                return working_raw.get_data(picks=[ch_o])[0, :]
+            elif hb == "HbR":
+                return working_raw.get_data(picks=[ch_r])[0, :]
+            else: # HbTot = HbO + HbR
+                data_o = working_raw.get_data(picks=[ch_o])[0, :]
+                data_r = working_raw.get_data(picks=[ch_r])[0, :]
+                return data_o + data_r
+
+    # Grab the specific data based on the drop-down and radio selections
+    data_raw = get_hb_data(channel_option, hb_type)
 
     # Compute raw PSD
     freqs_raw, psd_raw = signal.welch(data_raw, fs, nperseg=1024)
@@ -110,7 +139,7 @@ else:
 
     # 1. Time Domain Plot
     with col1:
-        st.subheader(f"Time Domain: {channel_option}")
+        st.subheader(f"Time Domain: {channel_option} ({hb_type})")
         fig_time = go.Figure()
         
         if apply_filter and overlay_raw:
@@ -124,8 +153,8 @@ else:
                                       name=line_name, line=dict(color=line_color, width=2)))
 
         # --- FIX: MANUAL EVENT MARKER ALIGNMENT ---
-        if show_markers and len(raw_hbo.annotations) > 0:
-            unique_desc = list(set(raw_hbo.annotations.description))
+        if show_markers and len(raw_haemo.annotations) > 0:
+            unique_desc = list(set(raw_haemo.annotations.description))
             # Color palette for distinct events
             colors = ['#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#ff7f0e'] 
             color_map = {desc: colors[i % len(colors)] for i, desc in enumerate(unique_desc)}
@@ -133,7 +162,7 @@ else:
             added_to_legend = set()
 
             # Iterate over the original uncropped markers
-            for ann in raw_hbo.annotations:
+            for ann in raw_haemo.annotations:
                 orig_onset = ann['onset']
                 duration = ann['duration']
                 desc = ann['description']
@@ -158,13 +187,13 @@ else:
                         if show_leg:
                             fig_time.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color=c, dash='dash', width=2), name=f"Marker: {desc}"))
 
-        fig_time.update_layout(xaxis_title="Time (s)", yaxis_title="Amplitude (µM)", 
+        fig_time.update_layout(xaxis_title="Time (s)", yaxis_title="Amplitude (Molar)", 
                                template="plotly_white", legend=dict(x=0.01, y=0.99))
         st.plotly_chart(fig_time, use_container_width=True)
 
     # 2. Frequency Domain (PSD) Plot
     with col2:
-        st.subheader(f"Frequency Domain (PSD): {channel_option}")
+        st.subheader(f"Frequency Domain (PSD): {channel_option} ({hb_type})")
         fig_psd = go.Figure()
         
         if apply_filter and overlay_raw:
