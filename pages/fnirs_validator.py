@@ -123,34 +123,40 @@ else:
         fig_time.add_trace(go.Scatter(x=times, y=data_to_plot, mode='lines', 
                                       name=line_name, line=dict(color=line_color, width=2)))
 
-        # --- ADD EVENT MARKERS ---
-        if show_markers and len(working_raw.annotations) > 0:
-            unique_desc = list(set(working_raw.annotations.description))
+        # --- FIX: MANUAL EVENT MARKER ALIGNMENT ---
+        if show_markers and len(raw_hbo.annotations) > 0:
+            unique_desc = list(set(raw_hbo.annotations.description))
             # Color palette for distinct events
             colors = ['#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#ff7f0e'] 
             color_map = {desc: colors[i % len(colors)] for i, desc in enumerate(unique_desc)}
             
             added_to_legend = set()
 
-            for ann in working_raw.annotations:
-                onset = ann['onset']
+            # Iterate over the original uncropped markers
+            for ann in raw_hbo.annotations:
+                orig_onset = ann['onset']
                 duration = ann['duration']
                 desc = ann['description']
-                c = color_map[desc]
                 
-                show_leg = desc not in added_to_legend
-                added_to_legend.add(desc)
+                # Only draw the marker if it falls inside our new trimmed window
+                if trim_range[0] <= orig_onset <= trim_range[1]:
+                    # Shift the marker's position to match the new 0-based time axis
+                    aligned_onset = orig_onset - trim_range[0]
+                    c = color_map[desc]
+                    
+                    show_leg = desc not in added_to_legend
+                    added_to_legend.add(desc)
 
-                if duration > 0:
-                    # Block design events
-                    fig_time.add_vrect(x0=onset, x1=onset+duration, fillcolor=c, opacity=0.15, line_width=0, layer="below")
-                    if show_leg:
-                        fig_time.add_trace(go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color=c, symbol='square', size=12), name=f"Event: {desc}"))
-                else:
-                    # Point events
-                    fig_time.add_vline(x=onset, line_color=c, line_dash="dash", line_width=1.5, layer="below")
-                    if show_leg:
-                        fig_time.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color=c, dash='dash', width=2), name=f"Marker: {desc}"))
+                    if duration > 0:
+                        # Block design events
+                        fig_time.add_vrect(x0=aligned_onset, x1=aligned_onset+duration, fillcolor=c, opacity=0.15, line_width=0, layer="below")
+                        if show_leg:
+                            fig_time.add_trace(go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color=c, symbol='square', size=12), name=f"Event: {desc}"))
+                    else:
+                        # Point events
+                        fig_time.add_vline(x=aligned_onset, line_color=c, line_dash="dash", line_width=1.5, layer="below")
+                        if show_leg:
+                            fig_time.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color=c, dash='dash', width=2), name=f"Marker: {desc}"))
 
         fig_time.update_layout(xaxis_title="Time (s)", yaxis_title="Amplitude (µM)", 
                                template="plotly_white", legend=dict(x=0.01, y=0.99))
@@ -171,7 +177,9 @@ else:
         fig_psd.add_trace(go.Scatter(x=freqs_raw, y=psd_to_plot_db, mode='lines', 
                                      name=line_name_psd, line=dict(color=line_color_psd, width=2)))
         
+        # Add the Task-Evoked Hemodynamic Band
         fig_psd.add_vrect(x0=0.01, x1=0.08, fillcolor="blue", opacity=0.1, line_width=0, annotation_text="Neural Hemodynamics")
+        
         # Add the Physiological Artifact Bands
         fig_psd.add_vrect(x0=0.05, x1=0.15, fillcolor="orange", opacity=0.15, line_width=0, annotation_text="Mayer Waves")
         fig_psd.add_vrect(x0=0.2, x1=0.4, fillcolor="green", opacity=0.15, line_width=0, annotation_text="Respiration")
