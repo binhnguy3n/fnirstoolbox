@@ -83,6 +83,7 @@ else:
     # Marker Options
     show_markers = st.sidebar.checkbox("Show Event Markers", value=True)
     if show_markers:
+        marker_opacity = st.sidebar.slider("Marker Opacity", min_value=0.0, max_value=1.0, value=0.30, step=0.05)
         override_durations = st.sidebar.checkbox("Override Event Durations")
         if override_durations:
             custom_duration = st.sidebar.number_input("Custom Duration (s)", min_value=0.0, value=10.0, step=1.0)
@@ -211,11 +212,11 @@ else:
                     added_to_legend.add(desc)
 
                     if duration > 0:
-                        fig_time.add_vrect(x0=aligned_onset, x1=aligned_onset+duration, fillcolor=c, opacity=0.15, line_width=0, layer="below")
+                        fig_time.add_vrect(x0=aligned_onset, x1=aligned_onset+duration, fillcolor=c, opacity=marker_opacity, line_width=0, layer="below")
                         if show_leg:
                             fig_time.add_trace(go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color=c, symbol='square', size=12), name=f"Event: {desc}"))
                     else:
-                        fig_time.add_vline(x=aligned_onset, line_color=c, line_dash="dash", line_width=1.5, layer="below")
+                        fig_time.add_vline(x=aligned_onset, line_color=c, line_dash="dash", line_width=2.5, opacity=marker_opacity, layer="below")
                         if show_leg:
                             fig_time.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color=c, dash='dash', width=2), name=f"Marker: {desc}"))
 
