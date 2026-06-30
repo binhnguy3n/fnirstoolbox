@@ -246,14 +246,7 @@ else:
 
     with col_epoch_plot:
         if selected_event is not None:
-            # Safely create a 1-channel Raw object to handle the epoching math
-            safe_ch_name = channel_option.replace(" ", "_")
-            epoch_info = mne.create_info(ch_names=[safe_ch_name], sfreq=fs, ch_types=['misc'])
-            
-            # Sync the measurement date safely using the official MNE method
-            meas_date = working_raw.info.get('meas_date', None)
-            if meas_date is not None:
-                # Create a 1-channel Raw object and explicitly name the channel
+            # Create a 1-channel Raw object and explicitly name the channel
             safe_ch_name = channel_option.replace(" ", "_")
             epoch_info = mne.create_info(ch_names=[safe_ch_name], sfreq=fs, ch_types=['misc'])
             
