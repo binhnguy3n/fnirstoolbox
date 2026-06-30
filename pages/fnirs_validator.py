@@ -237,7 +237,9 @@ else:
             epoch_info = mne.create_info(ch_names=[safe_ch_name], sfreq=fs, ch_types=['misc'])
             
             # Sync the measurement date to prevent "Ambiguous operation" errors
-            epoch_info['meas_date'] = working_raw.info.get('meas_date', None)
+            meas_date = working_raw.info.get('meas_date', None)
+if meas_date is not None:
+    epoch_info.set_meas_date(meas_date)
             
             filtered_raw = mne.io.RawArray(np.atleast_2d(data_to_plot), epoch_info, verbose=False)
             
