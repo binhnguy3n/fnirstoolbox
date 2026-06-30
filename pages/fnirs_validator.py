@@ -34,7 +34,6 @@ def load_and_prep_data(file_data):
             
         raw = mne.io.read_raw_snirf(tmp_path, preload=True)
         raw_od = mne.preprocessing.nirs.optical_density(raw)
-        # We stop at beer_lambert_law so we keep both HbO and HbR in memory
         raw_haemo = mne.preprocessing.nirs.beer_lambert_law(raw_od, ppf=0.1)
         return raw_haemo
         
@@ -48,8 +47,29 @@ if raw_haemo is None:
     st.info("Please drag and drop a .snirf file into the sidebar to begin.")
 else:
     # --- SIDEBAR 3: MARKER EDITOR ---
-    st.sidebar.header("3. Marker Editor (TMS)")
+    st.sidebar.header("3. Marker Editor")
     if len(raw_haemo.annotations) > 0:
+        
+        # --- NEW: BULK UPDATE TOOL ---
+        st.sidebar.markdown("**Bulk Update All Markers**")
+        col_bulk1, col_bulk2 = st.sidebar.columns(2)
+        bulk_desc = col_bulk1.text_input("Name", value="TMS")
+        bulk_dur = col_bulk2.number_input("Duration (s)", value=0.2, step=0.1)
+        
+        if st.sidebar.button("Apply Bulk Update"):
+            new_bulk_annots = mne.Annotations(
+                onset=raw_haemo.annotations.onset,
+                duration=[bulk_dur] * len(raw_haemo.annotations),
+                description=[bulk_desc] * len(raw_haemo.annotations),
+                orig_time=raw_haemo.annotations.orig_time
+            )
+            raw_haemo.set_annotations(new_bulk_annots)
+            st.rerun() # Instantly refresh the UI
+            
+        st.sidebar.divider()
+            
+        # --- MANUAL ROW EDITOR ---
+        st.sidebar.markdown("**Manual Row Editor**")
         ann_df = pd.DataFrame({
             'onset': raw_haemo.annotations.onset,
             'duration': raw_haemo.annotations.duration,
@@ -58,7 +78,6 @@ else:
         
         edited_df = st.sidebar.data_editor(ann_df, num_rows="dynamic", hide_index=True, use_container_width=True)
         
-        # Apply edits back to the raw data
         edited_df = edited_df.dropna(subset=['onset', 'description'])
         new_annotations = mne.Annotations(
             onset=edited_df['onset'].values,
@@ -73,16 +92,14 @@ else:
     st.sidebar.header("4. Hemoglobin Selection")
     hemo_type = st.sidebar.radio("View Signal Type", ["HbO (Oxygenated)", "HbR (Deoxygenated)", "HbTot (Total)"])
     
-    # Set dynamic theme colors based on the chromophore
     if "HbO" in hemo_type:
-        theme_color = "#D62728" # Red
+        theme_color = "#D62728" 
         target_raw = raw_haemo.copy().pick(picks='hbo')
     elif "HbR" in hemo_type:
-        theme_color = "#1F77B4" # Blue
+        theme_color = "#1F77B4" 
         target_raw = raw_haemo.copy().pick(picks='hbr')
     else:
-        theme_color = "#2CA02C" # Green
-        # Manually calculate HbTot = HbO + HbR
+        theme_color = "#2CA02C" 
         raw_hbo = raw_haemo.copy().pick(picks='hbo')
         raw_hbr = raw_haemo.copy().pick(picks='hbr')
         hbt_data = raw_hbo.get_data() + raw_hbr.get_data()
@@ -115,11 +132,9 @@ else:
         ch_idx = ch_names.index(channel_option)
         data_raw = working_raw.get_data()[ch_idx, :]
 
-    # Compute raw PSD
     freqs_raw, psd_raw = signal.welch(data_raw, fs, nperseg=1024)
     psd_raw_db = 10 * np.log10(psd_raw)
 
-    # Apply stable SOS Filter
     if apply_filter:
         if highpass >= lowpass:
             st.error("⚠️ **Filter Error:** The High-pass cutoff must be strictly lower than the Low-pass cutoff.")
@@ -217,10 +232,19 @@ else:
 
     with col_epoch_plot:
         if selected_event is not None:
-            # Safely create a 1-channel Raw object to handle the epoching math
-            epoch_info = mne.create_info(ch_names=[channel_option], sfreq=fs, ch_types=['misc'])
+            # FIX: Safely create a 1-channel Raw object and handle metadata timekeeping perfectly
+            safe_ch_name = channel_option.replace(" ", "_")
+            epoch_info = mne.create_info(ch_names=[safe_ch_name], sfreq=fs, ch_types=['misc'])
+            
+            # Sync the measurement date to prevent "Ambiguous operation" errors
+            epoch_info['meas_date'] = working_raw.info.get('meas_date', None)
+            
             filtered_raw = mne.io.RawArray(np.atleast_2d(data_to_plot), epoch_info, verbose=False)
-            filtered_raw.set_annotations(working_raw.annotations)
+            
+            # Strip orig_time from the copied annotations to ensure perfect relative alignment
+            safe_annots = working_raw.annotations.copy()
+            safe_annots.orig_time = None
+            filtered_raw.set_annotations(safe_annots)
             
             events, event_dict = mne.events_from_annotations(filtered_raw, verbose=False)
             event_id = event_dict[selected_event]
