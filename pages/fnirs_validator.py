@@ -12,26 +12,15 @@ st.set_page_config(layout="wide", page_title="fNIRS Filter Validator")
 st.title("fNIRS Filter Validation Dashboard")
 st.markdown("Interactive tool to visually validate bandpass filters, edit markers, and generate Event-Related Averages (ERA).")
 
-# --- SIDEBAR CONTAINERS (Defines Visual Order) ---
-# By creating these containers first, we can control exactly what order the UI 
-# renders in, regardless of what order the background math executes.
-cont_upload = st.sidebar.container()
-cont_filter = st.sidebar.container()
-cont_bulk = st.sidebar.container()
-cont_hemo = st.sidebar.container()
-cont_trim = st.sidebar.container()
-cont_view = st.sidebar.container()
-cont_manual = st.sidebar.container()
+# --- SIDEBAR 1: UPLOAD ---
+st.sidebar.header("1. Upload Data")
+uploaded_file = st.sidebar.file_uploader("Upload a .snirf file", type=["snirf"])
 
-# --- 1. UPLOAD ---
-cont_upload.header("1. Upload Data")
-uploaded_file = cont_upload.file_uploader("Upload a .snirf file", type=["snirf"])
-
-# --- 2. FILTER ---
-cont_filter.header("2. Filter Parameters")
-apply_filter = cont_filter.checkbox("Apply Bandpass Filter", value=True)
-highpass = cont_filter.slider("High-pass Cutoff (Hz)", min_value=0.00, max_value=0.10, value=0.01, step=0.01)
-lowpass = cont_filter.slider("Low-pass Cutoff (Hz)", min_value=0.05, max_value=2.00, value=0.08, step=0.01)
+# --- SIDEBAR 2: FILTER ---
+st.sidebar.header("2. Filter Parameters")
+apply_filter = st.sidebar.checkbox("Apply Bandpass Filter", value=True)
+highpass = st.sidebar.slider("High-pass Cutoff (Hz)", min_value=0.00, max_value=0.10, value=0.01, step=0.01)
+lowpass = st.sidebar.slider("Low-pass Cutoff (Hz)", min_value=0.05, max_value=2.00, value=0.08, step=0.01)
 
 # --- LOAD DATA (Cached for speed) ---
 @st.cache_data
@@ -45,6 +34,7 @@ def load_and_prep_data(file_data):
             
         raw = mne.io.read_raw_snirf(tmp_path, preload=True)
         raw_od = mne.preprocessing.nirs.optical_density(raw)
+        # We stop at beer_lambert_law so we keep both HbO and HbR in memory
         raw_haemo = mne.preprocessing.nirs.beer_lambert_law(raw_od, ppf=0.1)
         return raw_haemo
         
@@ -57,61 +47,42 @@ raw_haemo = load_and_prep_data(uploaded_file)
 if raw_haemo is None:
     st.info("Please drag and drop a .snirf file into the sidebar to begin.")
 else:
-    # --- 3. BULK MARKER UPDATE ---
-    cont_bulk.header("3. Bulk Marker Update")
+    # --- SIDEBAR 3: MARKER EDITOR ---
+    st.sidebar.header("3. Marker Editor (TMS)")
     if len(raw_haemo.annotations) > 0:
-        col_bulk1, col_bulk2 = cont_bulk.columns(2)
-        bulk_desc = col_bulk1.text_input("Name", value="TMS")
-        bulk_dur = col_bulk2.number_input("Duration (s)", value=0.2, step=0.1)
+        ann_df = pd.DataFrame({
+            'onset': raw_haemo.annotations.onset,
+            'duration': raw_haemo.annotations.duration,
+            'description': raw_haemo.annotations.description
+        })
         
-        if cont_bulk.button("Apply Bulk Update"):
-            new_bulk_annots = mne.Annotations(
-                onset=raw_haemo.annotations.onset,
-                duration=[bulk_dur] * len(raw_haemo.annotations),
-                description=[bulk_desc] * len(raw_haemo.annotations),
-                orig_time=raw_haemo.annotations.orig_time
-            )
-            raw_haemo.set_annotations(new_bulk_annots)
-            st.rerun() # Instantly refresh the UI
+        edited_df = st.sidebar.data_editor(ann_df, num_rows="dynamic", hide_index=True, use_container_width=True)
+        
+        # Apply edits back to the raw data
+        edited_df = edited_df.dropna(subset=['onset', 'description'])
+        new_annotations = mne.Annotations(
+            onset=edited_df['onset'].values,
+            duration=edited_df['duration'].values,
+            description=edited_df['description'].values
+        )
+        raw_haemo.set_annotations(new_annotations)
     else:
-        cont_bulk.info("No markers found.")
+        st.sidebar.info("No markers found.")
 
-    # --- 7. MANUAL EDITOR (Logic runs here, UI renders at the bottom) ---
-    # We must process the manual edits here so the changes cascade down 
-    # to the Hemoglobin selection and Trimming algorithms below.
-    with cont_manual.expander("⚙️ Advanced: Manual Marker Editor", expanded=False):
-        if len(raw_haemo.annotations) > 0:
-            ann_df = pd.DataFrame({
-                'onset': raw_haemo.annotations.onset,
-                'duration': raw_haemo.annotations.duration,
-                'description': raw_haemo.annotations.description
-            })
-            
-            edited_df = st.data_editor(ann_df, num_rows="dynamic", hide_index=True, use_container_width=True)
-            
-            edited_df = edited_df.dropna(subset=['onset', 'description'])
-            new_annotations = mne.Annotations(
-                onset=edited_df['onset'].values,
-                duration=edited_df['duration'].values,
-                description=edited_df['description'].values,
-                orig_time=raw_haemo.annotations.orig_time # Maintain original anchoring
-            )
-            raw_haemo.set_annotations(new_annotations)
-        else:
-            st.info("No markers available to edit.")
-
-    # --- 4. HEMOGLOBIN SELECTION ---
-    cont_hemo.header("4. Hemoglobin Selection")
-    hemo_type = cont_hemo.radio("View Signal Type", ["HbO (Oxygenated)", "HbR (Deoxygenated)", "HbTot (Total)"])
+    # --- SIDEBAR 4: HEMOGLOBIN SELECTION ---
+    st.sidebar.header("4. Hemoglobin Selection")
+    hemo_type = st.sidebar.radio("View Signal Type", ["HbO (Oxygenated)", "HbR (Deoxygenated)", "HbTot (Total)"])
     
+    # Set dynamic theme colors based on the chromophore
     if "HbO" in hemo_type:
-        theme_color = "#D62728" 
+        theme_color = "#D62728" # Red
         target_raw = raw_haemo.copy().pick(picks='hbo')
     elif "HbR" in hemo_type:
-        theme_color = "#1F77B4" 
+        theme_color = "#1F77B4" # Blue
         target_raw = raw_haemo.copy().pick(picks='hbr')
     else:
-        theme_color = "#2CA02C" 
+        theme_color = "#2CA02C" # Green
+        # Manually calculate HbTot = HbO + HbR
         raw_hbo = raw_haemo.copy().pick(picks='hbo')
         raw_hbr = raw_haemo.copy().pick(picks='hbr')
         hbt_data = raw_hbo.get_data() + raw_hbr.get_data()
@@ -121,18 +92,18 @@ else:
         target_raw = mne.io.RawArray(hbt_data, info, verbose=False)
         target_raw.set_annotations(raw_haemo.annotations)
 
-    # --- 5. TRIMMING ---
-    cont_trim.header("5. Data Trimming")
+    # --- SIDEBAR 5: TRIMMING ---
+    st.sidebar.header("5. Data Trimming")
     max_time = float(target_raw.times[-1])
-    trim_range = cont_trim.slider("Select Time Range (s)", min_value=0.0, max_value=max_time, value=(0.0, max_time), step=1.0)
+    trim_range = st.sidebar.slider("Select Time Range (s)", min_value=0.0, max_value=max_time, value=(0.0, max_time), step=1.0)
     working_raw = target_raw.copy().crop(tmin=trim_range[0], tmax=trim_range[1])
 
-    # --- 6. VIEW OPTIONS ---
-    cont_view.header("6. View Options")
+    # --- SIDEBAR 6: VIEW OPTIONS ---
+    st.sidebar.header("6. View Options")
     ch_names = working_raw.ch_names
-    channel_option = cont_view.selectbox("Select Channel to View", ["Grand Average"] + ch_names)
-    overlay_raw = cont_view.checkbox("Overlay Raw Data", value=True)
-    show_markers = cont_view.checkbox("Show Event Markers", value=True)
+    channel_option = st.sidebar.selectbox("Select Channel to View", ["Grand Average"] + ch_names)
+    overlay_raw = st.sidebar.checkbox("Overlay Raw Data", value=True)
+    show_markers = st.sidebar.checkbox("Show Event Markers", value=True)
 
     # --- DATA EXTRACTION & FILTERING ---
     times = working_raw.times
@@ -246,29 +217,41 @@ else:
 
     with col_epoch_plot:
         if selected_event is not None:
-            # Create a 1-channel Raw object and explicitly name the channel
-            safe_ch_name = channel_option.replace(" ", "_")
-            epoch_info = mne.create_info(ch_names=[safe_ch_name], sfreq=fs, ch_types=['misc'])
-            
-            meas_date = working_raw.info.get('meas_date', None)
-            if meas_date is not None:
-                epoch_info.set_meas_date(meas_date)
-            
+            # Safely create a 1-channel Raw object to handle the epoching math
+            epoch_info = mne.create_info(ch_names=[channel_option], sfreq=fs, ch_types=['misc'])
             filtered_raw = mne.io.RawArray(np.atleast_2d(data_to_plot), epoch_info, verbose=False)
-            
-            # Create a new Annotations object without orig_time
-            safe_annots = mne.Annotations(
-                onset=working_raw.annotations.onset,
-                duration=working_raw.annotations.duration,
-                description=working_raw.annotations.description,
-                orig_time=None
-            )
-            filtered_raw.set_annotations(safe_annots)
+            filtered_raw.set_annotations(working_raw.annotations)
             
             events, event_dict = mne.events_from_annotations(filtered_raw, verbose=False)
             event_id = event_dict[selected_event]
             
-            # Epoching: explicitly pick the channel by name to avoid ambiguity
-            epochs = mne.Epochs(filtered_raw, events, event_id=event_id, 
-                                tmin=tmin, tmax=tmax, baseline=(tmin, 0), 
-                                picks=[safe_ch_name], preload=True, verbose=False)
+            try:
+                epochs = mne.Epochs(filtered_raw, events, event_id=event_id, 
+                                    tmin=tmin, tmax=tmax, baseline=(tmin, 0), preload=True, verbose=False)
+                
+                if len(epochs) > 0:
+                    evoked = epochs.average()
+                    fig_era = go.Figure()
+                    
+                    # Individual Trials
+                    for i in range(len(epochs)):
+                        fig_era.add_trace(go.Scatter(x=epochs.times, y=epochs.get_data()[i, 0, :], 
+                                                     mode='lines', line=dict(color='lightgray', width=1), 
+                                                     opacity=0.3, showlegend=False, hoverinfo='skip'))
+                    
+                    # Grand Average
+                    fig_era.add_trace(go.Scatter(x=evoked.times, y=evoked.data[0], mode='lines', 
+                                                 name=f'Average {hemo_type.split(" ")[0]} Response', 
+                                                 line=dict(color=theme_color, width=3)))
+                    
+                    # Pulse Marker
+                    fig_era.add_vline(x=0, line_color='black', line_dash='dash', annotation_text="TMS Pulse")
+                    
+                    fig_era.update_layout(xaxis_title="Time relative to pulse (s)", yaxis_title="Amplitude (µM)",
+                                          template="plotly_white", title=f"Averaged Response to '{selected_event}' (n={len(epochs)} pulses)")
+                    st.plotly_chart(fig_era, use_container_width=True)
+                else:
+                    st.info("No events found within the current trimmed time range.")
+                    
+            except Exception as e:
+                st.error(f"Could not calculate Epochs. Check your time window. Error: {e}")
