@@ -128,4 +128,130 @@ else:
         data_to_plot = signal.sosfiltfilt(sos, data_raw)
         
         freqs_filt, psd_filt = signal.welch(data_to_plot, fs, nperseg=1024)
-        psd_to_
+        psd_to_plot_db = 10 * np.log10(psd_filt)
+    else:
+        data_to_plot = data_raw
+        psd_to_plot_db = psd_raw_db
+
+    # --- BUILD THE PLOTS ---
+    col1, col2 = st.columns(2) 
+
+    with col1:
+        st.subheader(f"Time Domain: {channel_option}")
+        fig_time = go.Figure()
+        
+        if apply_filter and overlay_raw:
+            fig_time.add_trace(go.Scatter(x=times, y=data_raw, mode='lines', name='Raw Signal', line=dict(color='lightgrey', width=1)))
+            
+        line_color = theme_color if apply_filter else 'lightgrey'
+        line_name = f'Filtered Signal ({hemo_type.split(" ")[0]})' if apply_filter else 'Raw Signal'
+        
+        fig_time.add_trace(go.Scatter(x=times, y=data_to_plot, mode='lines', name=line_name, line=dict(color=line_color, width=2)))
+
+        if show_markers and len(working_raw.annotations) > 0:
+            unique_desc = list(set(working_raw.annotations.description))
+            colors = ['#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#ff7f0e'] 
+            color_map = {desc: colors[i % len(colors)] for i, desc in enumerate(unique_desc)}
+            added_to_legend = set()
+
+            for ann in raw_haemo.annotations:
+                orig_onset = ann['onset']
+                duration = ann['duration']
+                desc = ann['description']
+                
+                if trim_range[0] <= orig_onset <= trim_range[1]:
+                    aligned_onset = orig_onset - trim_range[0]
+                    c = color_map[desc]
+                    show_leg = desc not in added_to_legend
+                    added_to_legend.add(desc)
+
+                    if duration > 0:
+                        fig_time.add_vrect(x0=aligned_onset, x1=aligned_onset+duration, fillcolor=c, opacity=0.15, line_width=0, layer="below")
+                        if show_leg:
+                            fig_time.add_trace(go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color=c, symbol='square', size=12), name=f"Event: {desc}"))
+                    else:
+                        fig_time.add_vline(x=aligned_onset, line_color=c, line_dash="dash", line_width=1.5, layer="below")
+                        if show_leg:
+                            fig_time.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color=c, dash='dash', width=2), name=f"Marker: {desc}"))
+
+        fig_time.update_layout(xaxis_title="Time (s)", yaxis_title="Amplitude (µM)", template="plotly_white", legend=dict(x=0.01, y=0.99))
+        st.plotly_chart(fig_time, use_container_width=True)
+
+    with col2:
+        st.subheader(f"Frequency Domain (PSD): {channel_option}")
+        fig_psd = go.Figure()
+        
+        if apply_filter and overlay_raw:
+            fig_psd.add_trace(go.Scatter(x=freqs_raw, y=psd_raw_db, mode='lines', name='Raw PSD', line=dict(color='lightgrey', width=1)))
+            
+        line_color_psd = theme_color if apply_filter else 'lightgrey'
+        line_name_psd = f'Filtered PSD ({hemo_type.split(" ")[0]})' if apply_filter else 'Raw PSD'
+
+        fig_psd.add_trace(go.Scatter(x=freqs_raw, y=psd_to_plot_db, mode='lines', name=line_name_psd, line=dict(color=line_color_psd, width=2)))
+        
+        fig_psd.add_vrect(x0=0.01, x1=0.08, fillcolor="blue", opacity=0.1, line_width=0, annotation_text="Neural Hemodynamics")
+        fig_psd.add_vrect(x0=0.05, x1=0.15, fillcolor="orange", opacity=0.15, line_width=0, annotation_text="Mayer Waves")
+        fig_psd.add_vrect(x0=0.2, x1=0.4, fillcolor="green", opacity=0.15, line_width=0, annotation_text="Respiration")
+        fig_psd.add_vrect(x0=0.8, x1=1.5, fillcolor="red", opacity=0.15, line_width=0, annotation_text="Cardiac")
+        
+        fig_psd.update_layout(xaxis_title="Frequency (Hz)", yaxis_title="Power (dB)", xaxis_range=[0, 2.0], template="plotly_white", legend=dict(x=0.80, y=0.99))
+        st.plotly_chart(fig_psd, use_container_width=True)
+
+    # --- EVENT-RELATED AVERAGE (EPOCHS) PLOT ---
+    st.divider()
+    st.subheader(f"Event-Related Average (ERA): {channel_option}")
+    
+    col_epoch_ui, col_epoch_plot = st.columns([1, 3])
+    
+    with col_epoch_ui:
+        st.markdown("**Epoch Window Parameters**")
+        tmin = st.number_input("Start Time (s) relative to pulse", value=-2.0, step=0.5)
+        tmax = st.number_input("End Time (s) relative to pulse", value=15.0, step=1.0)
+        
+        if len(working_raw.annotations) > 0:
+            unique_events = list(set(working_raw.annotations.description))
+            selected_event = st.selectbox("Select Event to Average", unique_events)
+        else:
+            selected_event = None
+            st.warning("No events available to epoch.")
+
+    with col_epoch_plot:
+        if selected_event is not None:
+            # Safely create a 1-channel Raw object to handle the epoching math
+            epoch_info = mne.create_info(ch_names=[channel_option], sfreq=fs, ch_types=['misc'])
+            filtered_raw = mne.io.RawArray(np.atleast_2d(data_to_plot), epoch_info, verbose=False)
+            filtered_raw.set_annotations(working_raw.annotations)
+            
+            events, event_dict = mne.events_from_annotations(filtered_raw, verbose=False)
+            event_id = event_dict[selected_event]
+            
+            try:
+                epochs = mne.Epochs(filtered_raw, events, event_id=event_id, 
+                                    tmin=tmin, tmax=tmax, baseline=(tmin, 0), preload=True, verbose=False)
+                
+                if len(epochs) > 0:
+                    evoked = epochs.average()
+                    fig_era = go.Figure()
+                    
+                    # Individual Trials
+                    for i in range(len(epochs)):
+                        fig_era.add_trace(go.Scatter(x=epochs.times, y=epochs.get_data()[i, 0, :], 
+                                                     mode='lines', line=dict(color='lightgray', width=1), 
+                                                     opacity=0.3, showlegend=False, hoverinfo='skip'))
+                    
+                    # Grand Average
+                    fig_era.add_trace(go.Scatter(x=evoked.times, y=evoked.data[0], mode='lines', 
+                                                 name=f'Average {hemo_type.split(" ")[0]} Response', 
+                                                 line=dict(color=theme_color, width=3)))
+                    
+                    # Pulse Marker
+                    fig_era.add_vline(x=0, line_color='black', line_dash='dash', annotation_text="TMS Pulse")
+                    
+                    fig_era.update_layout(xaxis_title="Time relative to pulse (s)", yaxis_title="Amplitude (µM)",
+                                          template="plotly_white", title=f"Averaged Response to '{selected_event}' (n={len(epochs)} pulses)")
+                    st.plotly_chart(fig_era, use_container_width=True)
+                else:
+                    st.info("No events found within the current trimmed time range.")
+                    
+            except Exception as e:
+                st.error(f"Could not calculate Epochs. Check your time window. Error: {e}")
