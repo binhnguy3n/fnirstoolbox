@@ -268,7 +268,7 @@ else:
     # --- FINALIZE PSD PLOT (BANDS & LAYOUT) ---
     with col2:
         # Move overlapping text to the bottom using annotation_position="bottom left"
-        fig_psd.add_vrect(x0=0.01, x1=0.08, fillcolor="blue", opacity=0.05, line_width=0, annotation_text="Neural", annotation_position="bottom left", annotation_textangle=-90)
+        fig_psd.add_vrect(x0=0.01, x1=0.08, fillcolor="blue", opacity=0.05, line_width=0, annotation_text="HRF", annotation_position="bottom left", annotation_textangle=-90)
         fig_psd.add_vrect(x0=0.05, x1=0.15, fillcolor="orange", opacity=0.1, line_width=0, annotation_text="Mayer Waves", annotation_position="bottom left", annotation_textangle=-90)
         fig_psd.add_vrect(x0=0.2, x1=0.4, fillcolor="green", opacity=0.1, line_width=0, annotation_text="Respiration", annotation_position="bottom left", annotation_textangle=-90)
         fig_psd.add_vrect(x0=0.8, x1=1.5, fillcolor="red", opacity=0.1, line_width=0, annotation_text="Cardiac", annotation_position="bottom left", annotation_textangle=-90)
