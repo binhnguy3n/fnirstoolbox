@@ -42,7 +42,7 @@ def load_and_prep_data(file_data):
         # NOTE: We DO NOT delete the tmp_path here.
         # MNE requires the file to stay on disk to perform background operations like .crop()
         
-        return raw_haemo # Return the full object instead of isolating HbO
+        return raw_haemo 
         
     except Exception as e:
         st.error(f"Error loading file: {e}")
@@ -56,8 +56,8 @@ else:
     # --- DATA TRIMMING & SELECTION UI ---
     st.sidebar.header("3. Data Trimming & Selection")
     
-    # Toggle for Hemoglobin type
-    hb_type = st.sidebar.radio("Select Hemoglobin Type", ["HbO", "HbR", "HbTot"])
+    # Multiselect for Hemoglobin type (allows overlaying them)
+    hb_types = st.sidebar.multiselect("Select Hemoglobin Type(s)", ["HbO", "HbR", "HbTot"], default=["HbO", "HbR"])
     
     max_time = float(raw_haemo.times[-1])
     
@@ -81,7 +81,11 @@ else:
     overlay_raw = st.sidebar.checkbox("Overlay Raw Data", value=True)
     show_markers = st.sidebar.checkbox("Show Event Markers", value=True)
 
-    # --- DATA EXTRACTION ---
+    if not hb_types:
+        st.warning("Please select at least one Hemoglobin type from the sidebar to view plots.")
+        st.stop()
+
+    # --- DATA EXTRACTION HELPER ---
     times = working_raw.times
     fs = working_raw.info['sfreq']
     
@@ -112,64 +116,82 @@ else:
                 data_r = working_raw.get_data(picks=[ch_r])[0, :]
                 return data_o + data_r
 
-    # Grab the specific data based on the drop-down and radio selections
-    data_raw = get_hb_data(channel_option, hb_type)
-
-    # Compute raw PSD
-    freqs_raw, psd_raw = signal.welch(data_raw, fs, nperseg=1024)
-    psd_raw_db = 10 * np.log10(psd_raw)
-
-    # --- FILTER LOGIC ---
-    if apply_filter:
-        if highpass >= lowpass:
-            st.error("⚠️ **Filter Error:** The High-pass cutoff must be strictly lower than the Low-pass cutoff. Please adjust the sliders.")
-            st.stop() 
-
-        sos = signal.butter(4, [highpass, lowpass], btype='bandpass', fs=fs, output='sos')
-        data_to_plot = signal.sosfiltfilt(sos, data_raw)
-        
-        freqs_filt, psd_filt = signal.welch(data_to_plot, fs, nperseg=1024)
-        psd_to_plot_db = 10 * np.log10(psd_filt)
-    else:
-        data_to_plot = data_raw
-        psd_to_plot_db = psd_raw_db
+    # --- FILTER VALIDATION ---
+    if apply_filter and highpass >= lowpass:
+        st.error("⚠️ **Filter Error:** The High-pass cutoff must be strictly lower than the Low-pass cutoff. Please adjust the sliders.")
+        st.stop() 
 
     # --- BUILD THE PLOTS ---
     col1, col2 = st.columns(2) 
-
-    # 1. Time Domain Plot
+    
     with col1:
-        st.subheader(f"Time Domain: {channel_option} ({hb_type})")
+        st.subheader(f"Time Domain: {channel_option}")
         fig_time = go.Figure()
         
+    with col2:
+        st.subheader(f"Frequency Domain (PSD): {channel_option}")
+        fig_psd = go.Figure()
+
+    # Color definitions mapping standard fNIRS conventions
+    color_theme = {
+        "HbO": {"main": "#d62728", "faded": "rgba(214, 39, 40, 0.3)"},  # Red
+        "HbR": {"main": "#1f77b4", "faded": "rgba(31, 119, 180, 0.3)"}, # Blue
+        "HbTot": {"main": "#2ca02c", "faded": "rgba(44, 160, 44, 0.3)"} # Green
+    }
+
+    # Loop through each selected hemoglobin type and add it to the plots
+    for hb in hb_types:
+        data_raw = get_hb_data(channel_option, hb)
+        
+        # Compute raw PSD
+        freqs_raw, psd_raw = signal.welch(data_raw, fs, nperseg=1024)
+        psd_raw_db = 10 * np.log10(psd_raw)
+
+        # Apply Filter if requested
+        if apply_filter:
+            sos = signal.butter(4, [highpass, lowpass], btype='bandpass', fs=fs, output='sos')
+            data_to_plot = signal.sosfiltfilt(sos, data_raw)
+            
+            freqs_filt, psd_filt = signal.welch(data_to_plot, fs, nperseg=1024)
+            psd_to_plot_db = 10 * np.log10(psd_filt)
+        else:
+            data_to_plot = data_raw
+            psd_to_plot_db = psd_raw_db
+
+        # 1. Populate Time Domain Plot
         if apply_filter and overlay_raw:
             fig_time.add_trace(go.Scatter(x=times, y=data_raw, mode='lines', 
-                                          name='Raw Signal', line=dict(color='lightgrey', width=1)))
+                                          name=f'Raw {hb}', line=dict(color=color_theme[hb]["faded"], width=1)))
             
-        line_color = '#1f77b4' if apply_filter else 'lightgrey'
-        line_name = 'Filtered Signal' if apply_filter else 'Raw Signal'
-        
+        line_name = f'Filtered {hb}' if apply_filter else f'Raw {hb}'
         fig_time.add_trace(go.Scatter(x=times, y=data_to_plot, mode='lines', 
-                                      name=line_name, line=dict(color=line_color, width=2)))
+                                      name=line_name, line=dict(color=color_theme[hb]["main"], width=2)))
 
-        # --- FIX: MANUAL EVENT MARKER ALIGNMENT ---
+        # 2. Populate Frequency Domain (PSD) Plot
+        if apply_filter and overlay_raw:
+            fig_psd.add_trace(go.Scatter(x=freqs_raw, y=psd_raw_db, mode='lines', 
+                                         name=f'Raw {hb} PSD', line=dict(color=color_theme[hb]["faded"], width=1)))
+            
+        line_name_psd = f'Filtered {hb} PSD' if apply_filter else f'Raw {hb} PSD'
+        fig_psd.add_trace(go.Scatter(x=freqs_raw, y=psd_to_plot_db, mode='lines', 
+                                     name=line_name_psd, line=dict(color=color_theme[hb]["main"], width=2)))
+
+    # --- FINALIZE TIME PLOT (MARKERS & LAYOUT) ---
+    with col1:
         if show_markers and len(raw_haemo.annotations) > 0:
             unique_desc = list(set(raw_haemo.annotations.description))
-            # Color palette for distinct events
-            colors = ['#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#ff7f0e'] 
+            # Marker color palette
+            colors = ['#7f7f7f', '#bcbd22', '#17becf', '#e377c2', '#8c564b', '#9467bd'] 
             color_map = {desc: colors[i % len(colors)] for i, desc in enumerate(unique_desc)}
             
             added_to_legend = set()
 
-            # Iterate over the original uncropped markers
             for ann in raw_haemo.annotations:
                 orig_onset = ann['onset']
                 duration = ann['duration']
                 desc = ann['description']
                 
-                # Only draw the marker if it falls inside our new trimmed window
                 if trim_range[0] <= orig_onset <= trim_range[1]:
-                    # Shift the marker's position to match the new 0-based time axis
                     aligned_onset = orig_onset - trim_range[0]
                     c = color_map[desc]
                     
@@ -177,12 +199,10 @@ else:
                     added_to_legend.add(desc)
 
                     if duration > 0:
-                        # Block design events
                         fig_time.add_vrect(x0=aligned_onset, x1=aligned_onset+duration, fillcolor=c, opacity=0.15, line_width=0, layer="below")
                         if show_leg:
                             fig_time.add_trace(go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color=c, symbol='square', size=12), name=f"Event: {desc}"))
                     else:
-                        # Point events
                         fig_time.add_vline(x=aligned_onset, line_color=c, line_dash="dash", line_width=1.5, layer="below")
                         if show_leg:
                             fig_time.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color=c, dash='dash', width=2), name=f"Marker: {desc}"))
@@ -191,28 +211,15 @@ else:
                                template="plotly_white", legend=dict(x=0.01, y=0.99))
         st.plotly_chart(fig_time, use_container_width=True)
 
-    # 2. Frequency Domain (PSD) Plot
+    # --- FINALIZE PSD PLOT (BANDS & LAYOUT) ---
     with col2:
-        st.subheader(f"Frequency Domain (PSD): {channel_option} ({hb_type})")
-        fig_psd = go.Figure()
-        
-        if apply_filter and overlay_raw:
-            fig_psd.add_trace(go.Scatter(x=freqs_raw, y=psd_raw_db, mode='lines', 
-                                         name='Raw PSD', line=dict(color='lightgrey', width=1)))
-            
-        line_color_psd = 'red' if apply_filter else 'lightgrey'
-        line_name_psd = 'Filtered PSD' if apply_filter else 'Raw PSD'
-
-        fig_psd.add_trace(go.Scatter(x=freqs_raw, y=psd_to_plot_db, mode='lines', 
-                                     name=line_name_psd, line=dict(color=line_color_psd, width=2)))
-        
         # Add the Task-Evoked Hemodynamic Band
-        fig_psd.add_vrect(x0=0.01, x1=0.08, fillcolor="blue", opacity=0.1, line_width=0, annotation_text="Neural Hemodynamics")
+        fig_psd.add_vrect(x0=0.01, x1=0.08, fillcolor="blue", opacity=0.05, line_width=0, annotation_text="Neural Hemodynamics")
         
         # Add the Physiological Artifact Bands
-        fig_psd.add_vrect(x0=0.05, x1=0.15, fillcolor="orange", opacity=0.15, line_width=0, annotation_text="Mayer Waves")
-        fig_psd.add_vrect(x0=0.2, x1=0.4, fillcolor="green", opacity=0.15, line_width=0, annotation_text="Respiration")
-        fig_psd.add_vrect(x0=0.8, x1=1.5, fillcolor="red", opacity=0.15, line_width=0, annotation_text="Cardiac")
+        fig_psd.add_vrect(x0=0.05, x1=0.15, fillcolor="orange", opacity=0.1, line_width=0, annotation_text="Mayer Waves")
+        fig_psd.add_vrect(x0=0.2, x1=0.4, fillcolor="green", opacity=0.1, line_width=0, annotation_text="Respiration")
+        fig_psd.add_vrect(x0=0.8, x1=1.5, fillcolor="red", opacity=0.1, line_width=0, annotation_text="Cardiac")
         
         fig_psd.update_layout(xaxis_title="Frequency (Hz)", yaxis_title="Power (dB)", 
                               xaxis_range=[0, 2.0], template="plotly_white", legend=dict(x=0.80, y=0.99))
