@@ -79,7 +79,13 @@ else:
     
     channel_option = st.sidebar.selectbox("Select Channel to View", ["Grand Average"] + base_chans)
     overlay_raw = st.sidebar.checkbox("Overlay Raw Data", value=True)
+    
+    # Marker Options
     show_markers = st.sidebar.checkbox("Show Event Markers", value=True)
+    if show_markers:
+        override_durations = st.sidebar.checkbox("Override Event Durations")
+        if override_durations:
+            custom_duration = st.sidebar.number_input("Custom Duration (s)", min_value=0.0, value=10.0, step=1.0)
 
     if not hb_types:
         st.warning("Please select at least one Hemoglobin type from the sidebar to view plots.")
@@ -188,7 +194,13 @@ else:
 
             for ann in raw_haemo.annotations:
                 orig_onset = ann['onset']
-                duration = ann['duration']
+                
+                # Apply custom duration if requested
+                if override_durations:
+                    duration = custom_duration
+                else:
+                    duration = ann['duration']
+                    
                 desc = ann['description']
                 
                 if trim_range[0] <= orig_onset <= trim_range[1]:
